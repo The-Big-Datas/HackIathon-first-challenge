@@ -1,0 +1,53 @@
+{
+  "name": "PreAuth hackIAthon",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+
+  // Named volume keeps ~/.claude (auth token, settings, session history)
+  // across container rebuilds. Per-project isolation via devcontainerId.
+  "mounts": [
+    "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
+  ],
+
+  "remoteUser": "vscode",
+
+  "containerEnv": {
+    "PYTHONPATH": "/workspace",
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+
+  "forwardPorts": [8000, 8501, 3000],
+  "portsAttributes": {
+    "8000": { "label": "Backend (FastAPI)",       "onAutoForward": "notify" },
+    "8501": { "label": "Frontend (Streamlit)",    "onAutoForward": "notify" },
+    "3000": { "label": "Frontend (static HTML)",  "onAutoForward": "notify" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  }
+}

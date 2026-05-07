@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      # ~/.claude is mounted via devcontainer.json mounts (not here).
+      # devcontainer tooling handles volume creation with the devcontainerId suffix.
+    command: sleep infinity
+    env_file:
+      - path: ../.env
+        required: false
+    ports:
+      - "8000:8000"
+      - "8501:8501"
+      - "3000:3000"
+    user: vscode
+

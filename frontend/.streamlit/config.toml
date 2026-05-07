@@ -1,0 +1,17 @@
+[theme]
+# Force light base so the design's clinical palette renders consistently
+# regardless of the user's OS / browser dark-mode preference. Without this,
+# Streamlit serves dark button/widget chrome that fights the light tokens
+# in styles.py and the buttons render with invisible text.
+base = "light"
+backgroundColor = "#f4f7fa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0b1a2b"
+primaryColor = "#1763d1"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
