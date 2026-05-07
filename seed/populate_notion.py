@@ -45,20 +45,26 @@ DOCS_OPTIONS = [
 ]
 
 
+DB_TO_DS: dict[str, str] = {}
+
+
 def crear_db(title: str, properties: dict) -> str:
     r = notion.databases.create(
         parent={"type": "page_id", "page_id": PARENT},
         title=[{"type": "text", "text": {"content": title}}],
-        properties=properties,
+        initial_data_source={"properties": properties},
     )
+    db_id = r["id"]
+    ds_id = r["data_sources"][0]["id"]
+    DB_TO_DS[db_id] = ds_id
     print(f"  -> {title}")
-    return r["id"]
+    return db_id
 
 
-def relation(target_id: str) -> dict:
+def relation(target_db_id: str) -> dict:
     return {
         "relation": {
-            "database_id": target_id,
+            "data_source_id": DB_TO_DS[target_db_id],
             "type": "single_property",
             "single_property": {},
         }
@@ -114,8 +120,8 @@ db_polizas = crear_db(
 )
 
 # Asegurados.poliza -> Polizas (update porque era circular)
-notion.databases.update(
-    database_id=db_asegurados,
+notion.data_sources.update(
+    data_source_id=DB_TO_DS[db_asegurados],
     properties={"poliza": relation(db_polizas)},
 )
 print("  -> Asegurados.poliza relation linked")
@@ -352,12 +358,12 @@ print("  -> 3 informes")
 print("\n" + "=" * 60)
 print("LISTO. Pega esto en backend/.env y guarda:")
 print("=" * 60)
-print(f"NOTION_DB_ASEGURADOS={db_asegurados}")
-print(f"NOTION_DB_POLIZAS={db_polizas}")
-print(f"NOTION_DB_PLANES={db_planes}")
-print(f"NOTION_DB_COBERTURAS={db_coberturas}")
-print(f"NOTION_DB_INFORMES={db_informes}")
-print(f"NOTION_DB_DECISIONES={db_decisiones}")
+print(f"NOTION_DB_ASEGURADOS={DB_TO_DS[db_asegurados]}")
+print(f"NOTION_DB_POLIZAS={DB_TO_DS[db_polizas]}")
+print(f"NOTION_DB_PLANES={DB_TO_DS[db_planes]}")
+print(f"NOTION_DB_COBERTURAS={DB_TO_DS[db_coberturas]}")
+print(f"NOTION_DB_INFORMES={DB_TO_DS[db_informes]}")
+print(f"NOTION_DB_DECISIONES={DB_TO_DS[db_decisiones]}")
 print("=" * 60)
 print("\nVerifica en Notion: deberias ver 6 DBs en tu pagina padre,")
 print("con 3 planes, 8 coberturas, 3 asegurados, 3 polizas y 3 informes.")

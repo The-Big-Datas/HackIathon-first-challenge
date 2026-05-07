@@ -53,8 +53,10 @@ def _relation_ids(prop: dict) -> list[str]:
     return [r["id"] for r in (prop.get("relation") or [])]
 
 
-def _query_one(database_id: str, filter_: dict) -> Optional[dict]:
-    r = notion.databases.query(database_id=database_id, filter=filter_, page_size=1)
+def _query_one(data_source_id: str, filter_: dict) -> Optional[dict]:
+    r = notion.data_sources.query(
+        data_source_id=data_source_id, filter=filter_, page_size=1
+    )
     results = r.get("results") or []
     return results[0] if results else None
 
@@ -225,7 +227,7 @@ def submit_decision(
         }
 
     notion.pages.create(
-        parent={"database_id": settings.NOTION_DB_DECISIONES},
+        parent={"data_source_id": settings.NOTION_DB_DECISIONES},
         properties=properties,
     )
 
