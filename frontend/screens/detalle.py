@@ -47,8 +47,12 @@ def render(informe_id: Optional[str]) -> None:
 
     descripcion = detail.descripcion_procedimiento if detail else (slim.descripcion_procedimiento if slim else "")
 
-    # Page header — Volver button + h1 + procesar CTA on the same row
-    head_cols = st.columns([1, 6, 2])
+    # Page header — Volver button + h1 + procesar CTA on the same row.
+    # vertical_alignment="center" puts each column's content on the row
+    # midline so the buttons and the title block visually align even though
+    # their heights differ. Column ratio gives the right column ~33% of
+    # content width so the primary CTA stays on one line.
+    head_cols = st.columns([1, 5, 3], vertical_alignment="center")
     with head_cols[0]:
         if st.button("← Volver", key="detalle_back", use_container_width=True):
             state.go_to_bandeja()
@@ -83,7 +87,6 @@ def render(informe_id: Optional[str]) -> None:
             """
         )
     with head_cols[2]:
-        st.html("<div style='height:8px;'></div>")
         if st.button(
             "✦ Procesar pre-autorización",
             key="detalle_procesar",

@@ -691,6 +691,7 @@ button[data-testid="stSidebarCollapsedControl"] {
   font-size: 13px !important;
   box-shadow: var(--shadow-sm) !important;
   padding: 8px 14px !important;
+  white-space: nowrap !important;
 }
 .stButton > button:hover {
   background: var(--surface-2) !important;
