@@ -1,156 +1,129 @@
 # Insurance Pre-Authorization Agent
 
-Agente de IA construido con **FastAPI** + **Claude Agent SDK** que reduce a segundos
-el tiempo de pre-autorización de cirugías. Recibe el `report_id` de un informe médico
-digital (Hospital) y el `patient_id` con su póliza (Aseguradora) — ambos almacenados
-en bases de datos de **Notion** — y emite una decisión instantánea: *pre-aprobado*,
-*solicitud de documentos faltantes*, *rechazado* o *requiere revisión humana*.
+Agente FastAPI + Claude (SDK Anthropic) que decide en segundos si un informe
+medico se **Aprueba**, **Niega** o requiere **Documentos_Faltantes**. Lee
+informes, polizas y coberturas desde **Notion** y persiste la decision en una
+DB de auditoria.
 
 ## Arquitectura
 
 ```
-POST /authorize
+POST /authorize  (id_informe, cedula)
       |
       v
-PreAuthorizationAgent (Claude Agent SDK)
+PreAuthorizationAgent  (Anthropic tool-use loop, adaptive thinking, prompt caching)
       |
-      +-- tool: fetch_medical_report  --> Notion (Medical Reports DB)
-      +-- tool: fetch_policy          --> Notion (Policies DB)
-      +-- tool: submit_decision       --> Notion (Decisions DB)
+      +-- tool: fetch_informe       --> Notion (Informes_Medicos + Asegurados)
+      +-- tool: fetch_cobertura     --> Notion (Asegurados + Polizas + Planes + Coberturas)
+      +-- tool: submit_decision     --> Notion (Decisiones)
 ```
 
-El agente recorre un procedimiento determinista guiado por su `system_prompt`:
-vigencia → cobertura → carencia → documentos faltantes → decisión.
+Flujo deterministico que sigue el agente, en este orden:
+
+1. `fetch_informe(id_informe)` y validar que `paciente.cedula` coincida con la del request.
+2. `fetch_cobertura(cedula, procedimiento_cpt)`.
+3. **Vigencia**: `poliza.estado == "Vigente"`.
+4. **Cobertura**: existe cobertura para el plan + procedimiento y `cubierto == true`.
+5. **Carencia**: dias desde `poliza.fecha_alta` >= `cobertura.dias_carencia`.
+6. **Documentos**: `cobertura.documentos_requeridos` ⊆ `informe.documentos_adjuntos`.
+7. `submit_decision(...)` con la conclusion.
+
+Detiene en el primer paso fallido.
 
 ## Estructura
 
 ```
-app/
-├── main.py                    # FastAPI app
-├── config.py                  # Variables de entorno
-├── models/schemas.py          # Pydantic schemas
-├── routers/authorization.py   # Endpoint POST /authorize
-└── services/
-    ├── notion_service.py      # CRUD en Notion
-    └── agent_service.py       # Claude Agent SDK + tools
+backend/
+├── .env.example
+├── requirements.txt
+└── app/
+    ├── main.py                     # FastAPI app + CORS + /health
+    ├── config.py                   # Carga de .env
+    ├── models/schemas.py           # AuthorizeRequest / AuthorizeResponse / Decision
+    ├── services/
+    │   ├── notion_service.py       # Lecturas/escrituras a Notion
+    │   └── agent_service.py        # Loop Anthropic + tools
+    └── routers/authorization.py    # POST /authorize
+docs/notion_setup.md                # Como crear la integracion + sembrar DBs
+seed/populate_notion.py             # Crea las 6 DBs y siembra datos demo
 ```
 
 ## Setup
 
-### 1. Instalar dependencias
+### 1. Notion (una sola vez)
+
+Sigue [`docs/notion_setup.md`](docs/notion_setup.md):
+
+1. Crea integracion interna en Notion y copia el `NOTION_TOKEN`.
+2. Crea una pagina padre y conecta la integracion.
+3. `cp backend/.env.example backend/.env` y rellena `NOTION_TOKEN` +
+   `NOTION_PARENT_PAGE_ID`.
+4. Corre el seed:
+   ```bash
+   pip install -r backend/requirements.txt
+   python seed/populate_notion.py
+   ```
+5. Pega los 6 IDs `NOTION_DB_*` que imprime en `backend/.env`.
+
+El seed deja en Notion: 3 planes, 8 coberturas, 3 asegurados, 3 polizas, 3
+informes y la DB de decisiones vacia.
+
+### 2. API key de Anthropic
+
+Agrega `ANTHROPIC_API_KEY=sk-ant-...` en `backend/.env`. El modelo por defecto
+es `claude-sonnet-4-6` (cambialo con `CLAUDE_MODEL`).
+
+### 3. Ejecutar
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate          # En Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 2. Variables de entorno
-
-Copia `.env.example` a `.env` y llena las claves:
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Descripción |
-|---|---|
-| `ANTHROPIC_API_KEY` | API key de Anthropic |
-| `NOTION_API_KEY` | Integration secret de Notion |
-| `NOTION_MEDICAL_REPORTS_DB_ID` | ID de la base de informes médicos |
-| `NOTION_POLICIES_DB_ID` | ID de la base de pólizas |
-| `NOTION_DECISIONS_DB_ID` | (opcional) Base donde se guardan las decisiones |
-
-### 3. Estructura recomendada de las bases en Notion
-
-**Medical Reports**
-
-| Propiedad | Tipo |
-|---|---|
-| `report_id` | Title |
-| `patient_id` | Rich text |
-| `patient_name` | Rich text |
-| `diagnosis` | Rich text |
-| `procedure_code` | Rich text |
-| `procedure_name` | Rich text |
-| `requested_date` | Date |
-| `attending_physician` | Rich text |
-| `clinical_notes` | Rich text |
-| `attachments` | Files & media |
-
-**Policies**
-
-| Propiedad | Tipo |
-|---|---|
-| `policy_id` | Title |
-| `patient_id` | Rich text |
-| `plan_name` | Rich text |
-| `effective_date` | Date |
-| `expiration_date` | Date |
-| `covered_procedures` | Multi-select (códigos o nombres) |
-| `excluded_procedures` | Multi-select |
-| `waiting_periods_months` | Rich text — formato `CIRUGIA:6,ONCOLOGIA:12` |
-| `deductible` | Number |
-| `coverage_percentage` | Number |
-| `status` | Select (`active`, `suspended`, `expired`) |
-
-**Decisions** *(opcional)*
-
-| Propiedad | Tipo |
-|---|---|
-| `report_id` | Title |
-| `patient_id` | Rich text |
-| `decision` | Select (`pre_approved`, `missing_documents`, `rejected`, `needs_review`) |
-| `rationale` | Rich text |
-| `missing_documents` | Multi-select |
-| `issued_at` | Date |
-
-Comparte cada base con tu integración de Notion (`Connections` → tu integración).
-
-### 4. Ejecutar
-
-```bash
+cd backend
 uvicorn app.main:app --reload
 ```
 
-Abre http://localhost:8000/docs para explorar el Swagger UI.
+Swagger UI: http://localhost:8000/docs
 
 ## Uso
 
-### curl
+### POST /authorize
 
-```bash
-curl -X POST http://localhost:8000/authorize \
-  -H "Content-Type: application/json" \
-  -d @samples/authorize_request.json
-```
-
-### PyCharm / VS Code REST Client
-
-Abre `samples/authorize.http` y ejecuta cualquier petición con el botón **▶**
-junto a cada bloque `###`. Incluye 5 escenarios:
-- pre-aprobado
-- documentos faltantes
-- carencia incumplida
-- procedimiento excluido
-- paciente inexistente
-
-### Datos de prueba
-
-`samples/notion_seed_data.md` describe los registros que debes crear en tus
-bases de Notion para reproducir los escenarios anteriores.
-
-Respuesta esperada:
-
+Request:
 ```json
 {
-  "report_id": "RPT-001",
-  "patient_id": "PAT-123",
-  "decision": "pre_approved",
-  "rationale": "Procedimiento APE001 (Apendicectomía) cubierto por la póliza Premium Plus. Carencia de 6 meses cumplida (póliza vigente desde 2024-01-01). Cobertura 80%.",
-  "missing_documents": [],
-  "coverage_percentage": 80.0,
-  "estimated_patient_cost": 350.0,
-  "issued_at": "2026-05-06T18:30:00Z"
+  "id_informe": "INF-001",
+  "cedula": "0912345678"
 }
 ```
+
+Response (ejemplo aprobado):
+```json
+{
+  "id_informe": "INF-001",
+  "cedula": "0912345678",
+  "decision": "Aprobado",
+  "justificacion": "Procedimiento 44970 cubierto por Plan Salud Premium. Carencia de 30 dias cumplida (730 dias transcurridos). Documentos completos.",
+  "clausula_aplicada": "cobertura vigente y documentacion completa",
+  "documentos_faltantes": [],
+  "id_decision": "DEC-INF-001-1714800000",
+  "timestamp": "2026-05-07T18:30:00+00:00"
+}
+```
+
+### Escenarios de prueba (seed incluido)
+
+| `id_informe` | `cedula`     | Decision esperada       | Por que |
+|--------------|--------------|-------------------------|---------|
+| `INF-001`    | `0912345678` | `Aprobado`              | Premium + 2 anios + documentos completos |
+| `INF-002`    | `0923456789` | `Negado`                | Estandar + 45 dias < carencia 365 dias (cirugia bariatrica) |
+| `INF-003`    | `0934567890` | `Documentos_Faltantes`  | Falta `examenes_prequirurgicos`, `segundo_dictamen` |
+| `INF-001`    | `9999999999` | `Negado`                | Cedula no coincide con paciente del informe |
+
+## Modelo de datos en Notion
+
+6 databases relacionadas (creadas por el seed):
+
+- **Planes** — `nombre`, `nivel`
+- **Asegurados** — `cedula` (title), `nombre`, `fecha_nacimiento`, `poliza` →Polizas
+- **Polizas** — `numero` (title), `titular`→Asegurados, `plan`→Planes, `fecha_alta`, `estado`
+- **Coberturas** — `id` (title), `plan`→Planes, `codigo_cpt`, `cubierto`, `dias_carencia`, `documentos_requeridos`
+- **Informes_Medicos** — `id_informe` (title), `paciente`→Asegurados, `procedimiento_cpt`, `documentos_adjuntos`, etc.
+- **Decisiones** — `id_decision` (title), `informe`→Informes, `decision`, `justificacion`, `clausula_aplicada`, `documentos_faltantes`, `timestamp`
