@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import json as _json
 from typing import Any, Callable, Iterable, Optional
 
 import streamlit as st
@@ -32,9 +31,12 @@ def render_sidebar(active_stage: str, *, total_informes: int = 0) -> None:
     ]
 
     op_html = ""
+    bandeja_family = ("bandeja", "detalle", "procesando", "resultado")
     for ico, label, stage, count in nav_op:
-        active = stage is not None and stage == active_stage or (
-            stage == "bandeja" and active_stage in ("bandeja", "detalle", "procesando", "resultado")
+        # Explicit parens — Bandeja highlights for any stage in the family,
+        # other nav rows highlight only on exact stage match.
+        active = (stage is not None and stage == active_stage) or (
+            stage == "bandeja" and active_stage in bandeja_family
         )
         cls = "side-item active" if active else "side-item"
         count_html = f"<span class='count'>{count}</span>" if count else ""
@@ -183,21 +185,6 @@ def plan_badge(nivel: str, nombre: str = "") -> str:
 # Cards (open / close so screens can mix HTML + Streamlit widgets inside)
 # ============================================================================
 
-def card_open(title: str, *, icon_name: str = "", meta_html: str = "") -> None:
-    icon_html = (
-        f"<span style='color: var(--ink-3);'>{icon(icon_name, 16)}</span>"
-        if icon_name else ""
-    )
-    meta = f"<div class='meta'>{meta_html}</div>" if meta_html else ""
-    st.html(
-        f"<div class='card'><div class='card-h'>{icon_html}<h3>{html.escape(title)}</h3>{meta}</div><div class='card-b'>"
-    )
-
-
-def card_close() -> None:
-    st.html("</div></div>")
-
-
 def card_html(title: str, body_html: str, *, icon_name: str = "", meta_html: str = "") -> None:
     icon_html = (
         f"<span style='color: var(--ink-3);'>{icon(icon_name, 16)}</span>"
@@ -274,6 +261,17 @@ def error_panel(err: BackendError, *, on_retry: Optional[Callable[[], None]] = N
         "decode": "Respuesta del backend con formato inválido",
     }
     title = title_map.get(err.kind, "Error inesperado")
+    # Cold-wake hint for timeout errors — Render free-tier sleeps after 15min
+    # of idle and takes ~30s to wake. Surface this so users don't read
+    # "no respondió a tiempo" as "app is broken" and bounce.
+    cold_wake_hint = (
+        "<div style='font-size:12px; color:var(--ink-2); margin-top:8px; "
+        "padding:8px 10px; background:var(--warn-bg); border-radius:6px;'>"
+        "Si es la primera carga del día, el backend puede estar iniciándose. "
+        "Espera unos segundos antes de reintentar."
+        "</div>"
+        if err.kind == "timeout" else ""
+    )
     st.html(
         f"""
         <div class='card' style='border-color: rgba(192,57,43,.25);'>
@@ -285,34 +283,17 @@ def error_panel(err: BackendError, *, on_retry: Optional[Callable[[], None]] = N
             <div style='font-size:13px; color:var(--ink-2); margin-bottom:6px;'>
               Backend: <span class='mono'>{html.escape(err.url)}</span>
             </div>
+            {cold_wake_hint}
           </div>
         </div>
         """
     )
     with st.expander("Detalles técnicos"):
+        # err.message is already PII-scrubbed at construction time (api._scrub_pii).
         st.code(err.message, language="text")
     if on_retry is not None:
         if st.button("Reintentar", key=f"{key_prefix}_retry", type="primary"):
             on_retry()
 
 
-# ============================================================================
-# JSON code block (procesando expandable input/output)
-# ============================================================================
-
-def code_block(title: str, data: Any) -> str:
-    try:
-        text = _json.dumps(data, ensure_ascii=False, indent=2, default=str)
-    except (TypeError, ValueError):
-        text = str(data)
-    if len(text) > 600:
-        text = text[:600] + "\n…"
-    return (
-        f"<div>"
-        f"<div style='font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-3); margin-bottom:4px;'>{html.escape(title)}</div>"
-        f"<pre style='margin:0; padding:10px 12px; background:#0e1a2c; color:#cbe2ff; "
-        f"border-radius:8px; font-size:11px; font-family:var(--mono); line-height:1.5; "
-        f"overflow:auto; max-height:180px; white-space:pre-wrap; word-break:break-word;'>"
-        f"{html.escape(text)}</pre>"
-        f"</div>"
-    )
+# code_block helper removed — was unused in production code.

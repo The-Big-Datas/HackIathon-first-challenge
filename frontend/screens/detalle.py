@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from datetime import date, datetime
 from typing import Optional
 
 import streamlit as st
@@ -126,13 +127,12 @@ def _render_left_full(d: api.InformeDetail) -> None:
         if d.poliza_estado == "Vigente"
         else (components.badge(d.poliza_estado, "warn") if d.poliza_estado else "—")
     )
-    antig = ""
+    antig = "—"
     if d.poliza_fecha_alta:
         try:
-            from datetime import date, datetime
             alta = datetime.strptime(d.poliza_fecha_alta[:10], "%Y-%m-%d").date()
             antig = f"{(date.today() - alta).days} días"
-        except Exception:
+        except (ValueError, TypeError):
             antig = "—"
 
     asegurado_grid = components.kv_grid([

@@ -79,10 +79,6 @@ _PATHS: dict[str, str] = {
         '<path d="M12 3 2 21h20z"/>'
         '<path d="M12 9v5M12 17v.01"/>'
     ),
-    "arrow-left": (
-        '<path d="M19 12H5"/>'
-        '<path d="M12 19l-7-7 7-7"/>'
-    ),
     "chevron-right": (
         '<path d="M9 6l6 6-6 6"/>'
     ),
@@ -113,13 +109,6 @@ _PATHS: dict[str, str] = {
         '<path d="M12 3v12M7 11l5 5 5-5"/>'
         '<path d="M5 21h14"/>'
     ),
-    "copy": (
-        '<rect x="9" y="9" width="11" height="11" rx="2"/>'
-        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
-    ),
-    "play": (
-        '<path d="M6 4l14 8-14 8z"/>'
-    ),
     "link": (
         '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1 1"/>'
         '<path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 1 0 5.7 5.7l1-1"/>'
@@ -138,10 +127,6 @@ _PATHS: dict[str, str] = {
     "check-shield": (
         '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/>'
         '<path d="M9 12l2 2 4-4"/>'
-    ),
-    "notion": (
-        '<rect x="3" y="3" width="18" height="18" rx="2"/>'
-        '<path d="M7 7v10M7 7l10 10M17 7v10"/>'
     ),
 }
 

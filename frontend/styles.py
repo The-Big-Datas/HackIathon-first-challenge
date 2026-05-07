@@ -14,6 +14,8 @@ the first render but disappears on every subsequent screen transition.
 
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 
 FONTS_LINK = (
@@ -736,9 +738,6 @@ button[data-testid="stSidebarCollapsedControl"] {
 """
 
 
-import re as _re
-
-
 def _sanitize_css_for_markdown(css: str) -> str:
     """Strip CSS comments and neutralize every ``*`` so markdown leaves the
     style block intact.
@@ -760,7 +759,7 @@ def _sanitize_css_for_markdown(css: str) -> str:
        every text node in the sidebar.
     """
     # 1. Strip block comments
-    css = _re.sub(r"/\*.*?\*/", "", css, flags=_re.DOTALL)
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
     # 2. Substring class selector → prefix
     css = css.replace('[class*="st-"]', '[class^="st-"]')
     # 3. Substring data-testid → suffix (Streamlit primary button)
@@ -776,12 +775,22 @@ def _sanitize_css_for_markdown(css: str) -> str:
         'section[data-testid="stSidebar"] svg',
     )
     # Sanity guard: any remaining `*` would re-trigger the truncation.
+    # Raise loudly instead of silently stripping — silent removal would
+    # corrupt future selectors like `[role*='dialog']` (substring match)
+    # into exact-match `[role='dialog']` with no error signal.
     if "*" in css:
-        css = css.replace("*", "")
+        # Find the first remaining occurrence so the dev can diagnose.
+        idx = css.find("*")
+        snippet = css[max(0, idx - 40): idx + 40].replace("\n", " ")
+        raise RuntimeError(
+            "CSS sanitizer found an unhandled `*` after rewrites. "
+            "Add a rule to _sanitize_css_for_markdown for this pattern. "
+            f"Context: ...{snippet}..."
+        )
     # 5. CommonMark closes HTML type-1 blocks (<style>, <script>, <pre>)
     # at the first blank line. Our CSS has many blank lines between rule
     # groups; collapse them so markdown sees one continuous block.
-    css = _re.sub(r"\n\s*\n+", "\n", css)
+    css = re.sub(r"\n\s*\n+", "\n", css)
     return css
 
 

@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import time
 from datetime import date, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOY = date.today()
 
@@ -33,11 +34,16 @@ def _days_from_now(n: int) -> str:
     return (HOY + timedelta(days=n)).isoformat()
 
 
+# Synthetic patient fixtures. Cedulas use 0000000001/2/3 (NOT real Ecuadorian
+# format) and patient names are explicitly marked [DEMO]. Hospitals use
+# generic names that do not resemble real Ecuadorian institutions. This stub
+# is dev-only and binds to 127.0.0.1, but defense-in-depth: even if it
+# leaked, no real PII is exposed.
 INFORMES = {
     "INF-001": {
         "id_informe": "INF-001",
-        "paciente_cedula": "0912345678",
-        "paciente_nombre": "Juan Pérez Andrade",
+        "paciente_cedula": "0000000001",
+        "paciente_nombre": "[DEMO] Paciente Uno",
         "paciente_fecha_nacimiento": "1985-05-12",
         "paciente_sexo": "M",
         "poliza_numero": "POL-001",
@@ -47,8 +53,8 @@ INFORMES = {
         "poliza_fecha_alta": _days_ago(730),
         "poliza_estado": "Vigente",
         "fecha_emision": _days_ago(1),
-        "hospital": "Hospital Metropolitano",
-        "medico_tratante": "Dr. Velásquez",
+        "hospital": "Hospital Demo Norte",
+        "medico_tratante": "Dr. [DEMO] Uno",
         "diagnostico_cie10": "K35.9",
         "diagnostico_desc": "Apendicitis aguda, no especificada",
         "procedimiento_cpt": "44970",
@@ -63,8 +69,8 @@ INFORMES = {
     },
     "INF-002": {
         "id_informe": "INF-002",
-        "paciente_cedula": "0923456789",
-        "paciente_nombre": "María González Vera",
+        "paciente_cedula": "0000000002",
+        "paciente_nombre": "[DEMO] Paciente Dos",
         "paciente_fecha_nacimiento": "1978-09-03",
         "paciente_sexo": "F",
         "poliza_numero": "POL-002",
@@ -74,8 +80,8 @@ INFORMES = {
         "poliza_fecha_alta": _days_ago(45),
         "poliza_estado": "Vigente",
         "fecha_emision": _days_ago(2),
-        "hospital": "Hospital Vozandes",
-        "medico_tratante": "Dra. Mora",
+        "hospital": "Hospital Demo Centro",
+        "medico_tratante": "Dra. [DEMO] Dos",
         "diagnostico_cie10": "E66.01",
         "diagnostico_desc": "Obesidad mórbida por exceso de calorías",
         "procedimiento_cpt": "43644",
@@ -92,8 +98,8 @@ INFORMES = {
     },
     "INF-003": {
         "id_informe": "INF-003",
-        "paciente_cedula": "0934567890",
-        "paciente_nombre": "Carlos Bermeo Loja",
+        "paciente_cedula": "0000000003",
+        "paciente_nombre": "[DEMO] Paciente Tres",
         "paciente_fecha_nacimiento": "1990-01-22",
         "paciente_sexo": "M",
         "poliza_numero": "POL-003",
@@ -103,8 +109,8 @@ INFORMES = {
         "poliza_fecha_alta": _days_ago(365),
         "poliza_estado": "Vigente",
         "fecha_emision": _days_ago(1),
-        "hospital": "Hospital Alcívar",
-        "medico_tratante": "Dr. Mendoza",
+        "hospital": "Hospital Demo Sur",
+        "medico_tratante": "Dr. [DEMO] Tres",
         "diagnostico_cie10": "K80.20",
         "diagnostico_desc": "Cálculo de la vesícula biliar sin colecistitis",
         "procedimiento_cpt": "47562",
@@ -295,7 +301,11 @@ class StubHandler(BaseHTTPRequestHandler):
             informe_id = self.path[len("/procesar/"):]
             if informe_id not in INFORMES:
                 return self._send(404, {"detail": f"informe {informe_id} no encontrado"})
-            time.sleep(1.0)  # simulate the agent's thinking time
+            # Simulate the agent's thinking time. Configurable via env var so
+            # devs can exercise the procesando timeline under realistic loads
+            # (~5-15s) or the cold-wake path (>30s).
+            sleep_s = float(os.environ.get("STUB_PROCESAR_SLEEP_S", "1.0"))
+            time.sleep(sleep_s)
             return self._send(200, _trace_for(informe_id))
         self._send(404, {"detail": "not found"})
 
@@ -304,6 +314,12 @@ class StubHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8000
-    print(f"dev stub backend listening on http://localhost:{port}")
-    HTTPServer(("0.0.0.0", port), StubHandler).serve_forever()
+    # Bind to localhost-only by default (safer for Codespaces / public dev
+    # environments). Set STUB_BIND_ALL=1 to opt into 0.0.0.0.
+    bind = "0.0.0.0" if os.environ.get("STUB_BIND_ALL") else "127.0.0.1"
+    port = int(os.environ.get("STUB_PORT", "8000"))
+    # ThreadingHTTPServer matches FastAPI's concurrent behavior so parallel
+    # requests from the bandeja screen don't serialize, hiding the parallelism
+    # benefit during local dev.
+    print(f"dev stub backend listening on http://{bind}:{port}")
+    ThreadingHTTPServer((bind, port), StubHandler).serve_forever()

@@ -67,21 +67,29 @@ def render(informe_id: Optional[str]) -> None:
             state.go_to_bandeja()
         return
 
-    # Page header
-    st.html(
-        f"""
-        <div style='display:flex; align-items:center; gap:12px; margin-bottom:18px; flex-wrap:wrap;'>
-          <div style='flex:1; min-width:0;'>
+    # Capture the id at entry so we can detect cross-tab navigation away
+    # from this stage during the long synchronous procesar call.
+    entry_informe_id = informe_id
+
+    # Page header — Volver button rendered BEFORE the blocking call so the user
+    # has an escape hatch (best-effort: Streamlit can't truly cancel the POST,
+    # but the click registers on the next rerun).
+    head_cols = st.columns([1, 8], vertical_alignment="center")
+    with head_cols[0]:
+        if st.button("← Volver", key="proc_volver", use_container_width=True):
+            state.go_to_bandeja()
+            return
+    with head_cols[1]:
+        st.html(
+            f"""
             <div style='display:flex; align-items:center; gap:10px; flex-wrap:wrap;'>
               <h1 class='page-h1'>Analizando informe</h1>
               <span class='badge brand mono'>{html.escape(informe_id)}</span>
               <span class='pill live'><span class='dot'></span>Agente activo</span>
             </div>
-            <div class='page-sub'>Procesando con tool use directo · ~5–8 segundos</div>
-          </div>
-        </div>
-        """
-    )
+            <div class='page-sub'>Procesando con tool use directo · ~5–8 segundos · puede volver en cualquier momento</div>
+            """
+        )
 
     col_left, col_right = st.columns([14, 11], gap="medium")
     with col_left:
@@ -91,11 +99,10 @@ def render(informe_id: Optional[str]) -> None:
         telem_box = st.empty()
         neuro_box = st.empty()
 
-    # Render initial placeholder timeline. _render_timeline emits the full
-    # card (header + body) in one call so there's only ever one card-h.
+    # Render initial placeholder timeline. The first tool slot starts in the
+    # 'active' state with the pulsing dot so the page doesn't sit static
+    # while the request is in flight.
     _render_timeline(timeline_inner, revealed_idxs=set(), trace=[], active_idx=0, elapsed=0.0, total_steps=len(TOOL_ORDER))
-
-    # Render initial thinking panel + telemetry + neuro-symbolic note
     _render_thinking(thinking_box, transcript_lines=[], active_idx=0)
     _render_telemetry(telem_box, tokens=0, elapsed=0.0, tools_done=0)
     _render_neuro_note(neuro_box)
@@ -110,19 +117,49 @@ def render(informe_id: Optional[str]) -> None:
             state.go_to_bandeja()
         return
 
-    elapsed_total = time.time() - start
+    # Defensive race check: if the user navigated away during the long
+    # synchronous call (cross-tab Procesar mid-flight scenario), don't
+    # clobber their navigation by transitioning to resultado.
+    current_id = st.session_state.get("selected_informe_id")
+    current_stage = st.session_state.get("stage")
+    if current_id != entry_informe_id or current_stage != "procesando":
+        # User navigated away. Stash result for the original id (so the
+        # bandeja stat tiles still update) and exit without st.rerun.
+        results = st.session_state.get("results_by_id") or {}
+        results[entry_informe_id] = response
+        st.session_state.results_by_id = results
+        state.mark_processed(entry_informe_id)
+        return
+
     pairs = _match_placeholders(response.trace)
 
-    # Reveal each step sequentially
+    # Dedup: keep first occurrence per placeholder index. Duplicate tool calls
+    # in the trace would otherwise overwrite output in idx_to_entry, lose the
+    # first call's data, double-count tokens, and double-append narration.
+    seen_idxs: set[int] = set()
+    deduped_pairs: list[tuple[int, Any]] = []
+    for idx, entry in pairs:
+        if idx in seen_idxs:
+            continue
+        seen_idxs.add(idx)
+        deduped_pairs.append((idx, entry))
+
+    # Reveal each step sequentially.
+    # ORDERING FIX: render the timeline with active_idx=idx FIRST (so the
+    # pulse-dot + 'Ejecutando…' badge is visible during the sleep), THEN add
+    # to revealed and re-render in 'done' state. The previous order added to
+    # revealed before rendering, which made the active-state branch dead code.
     revealed: set[int] = set()
     transcript: list[tuple[int, str]] = []
     tokens = 0
-    for idx, entry in pairs:
-        revealed.add(idx)
-        tokens += 1500
+    ACTIVE_FRAME_S = STEP_REVEAL_DELAY_S * 0.6  # most of the budget on 'active'
+    DONE_FRAME_S = STEP_REVEAL_DELAY_S * 0.4
+    for idx, entry in deduped_pairs:
         narr = TOOL_META.get(_entry_tool(entry), {}).get("narr", "")
         if narr:
             transcript.append((idx, narr))
+
+        # Active frame: pulse-dot + Ejecutando badge for this idx
         _render_timeline(
             timeline_inner,
             revealed_idxs=revealed,
@@ -134,11 +171,24 @@ def render(informe_id: Optional[str]) -> None:
         _render_thinking(thinking_box, transcript_lines=transcript, active_idx=idx)
         _render_telemetry(
             telem_box,
-            tokens=tokens,
+            tokens=tokens + 1500,
             elapsed=time.time() - start,
             tools_done=len(revealed),
         )
-        time.sleep(STEP_REVEAL_DELAY_S)
+        time.sleep(ACTIVE_FRAME_S)
+
+        # Done frame: now mark as completed
+        revealed.add(idx)
+        tokens += 1500
+        _render_timeline(
+            timeline_inner,
+            revealed_idxs=revealed,
+            trace=response.trace,
+            active_idx=-1,
+            elapsed=time.time() - start,
+            total_steps=len(TOOL_ORDER),
+        )
+        time.sleep(DONE_FRAME_S)
 
     # Final state — no active step, all revealed
     final_elapsed = time.time() - start
@@ -152,6 +202,16 @@ def render(informe_id: Optional[str]) -> None:
     )
     _render_thinking(thinking_box, transcript_lines=transcript, active_idx=-1)
     _render_telemetry(telem_box, tokens=tokens, elapsed=final_elapsed, tools_done=len(revealed))
+
+    # Final defensive race check before clobbering navigation.
+    current_id = st.session_state.get("selected_informe_id")
+    current_stage = st.session_state.get("stage")
+    if current_id != entry_informe_id or current_stage != "procesando":
+        results = st.session_state.get("results_by_id") or {}
+        results[entry_informe_id] = response
+        st.session_state.results_by_id = results
+        state.mark_processed(entry_informe_id)
+        return
 
     state.mark_processed(informe_id)
     state.go_to_resultado(response)

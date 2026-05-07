@@ -125,7 +125,16 @@ def parse_documentos_check(trace: list[Any]) -> Optional[dict[str, Any]]:
     return None
 
 
-def _entry_field(entry: Any, name: str) -> Any:
+def entry_field(entry: Any, name: str) -> Any:
+    """Read a field off a TraceEntry-shaped object — accepts dataclass OR dict.
+
+    Public so resultado / procesando / future screens stop duplicating the
+    `entry.tool if hasattr(...) else entry.get(...)` pattern.
+    """
     if isinstance(entry, dict):
         return entry.get(name)
     return getattr(entry, name, None)
+
+
+# Backward-compat alias; existing call sites in this module still use _entry_field.
+_entry_field = entry_field

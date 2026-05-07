@@ -89,16 +89,8 @@ def _render_hero(
         )
 
     clausula_html = ""
+    decision_id = _decision_id_from_trace(result.trace)
     if decision and decision.clausula_aplicada:
-        # Try to find decision_id from the trace's emitir_decision output
-        decision_id = ""
-        for entry in result.trace:
-            tool = entry.tool if hasattr(entry, "tool") else (entry.get("tool") if isinstance(entry, dict) else "")
-            if tool == "emitir_decision":
-                output = entry.output if hasattr(entry, "output") else (entry.get("output") if isinstance(entry, dict) else None)
-                if isinstance(output, dict):
-                    decision_id = output.get("decision_id", "")
-                break
         clausula_html = (
             f"<div class='clausula'>"
             f"<span>{icon('shield', 12)} {html.escape(decision.clausula_aplicada)}</span>"
@@ -108,25 +100,24 @@ def _render_hero(
         )
 
     # Build a descriptive summary line: "Descripción · CPT · Paciente".
-    # Pull what we can from the get_informe_medico trace + the cached
-    # InformeDetail (if available) — the agent's output usually has cpt
-    # and cedula; nombre + descripcion need a fresh detail fetch.
     cpt = ""
     cedula = ""
-    for entry in result.trace:
-        tool = entry.tool if hasattr(entry, "tool") else (entry.get("tool") if isinstance(entry, dict) else "")
-        if tool == "get_informe_medico":
-            output = entry.output if hasattr(entry, "output") else (entry.get("output") if isinstance(entry, dict) else None)
-            if isinstance(output, dict):
-                cpt = output.get("procedimiento_cpt", "") or ""
-                cedula = output.get("paciente_cedula", "") or ""
-            break
+    informe_entry = _trace_entry_by_tool(result.trace, "get_informe_medico")
+    if informe_entry is not None:
+        output = utils.entry_field(informe_entry, "output")
+        if isinstance(output, dict):
+            cpt = output.get("procedimiento_cpt", "") or ""
+            cedula = output.get("paciente_cedula", "") or ""
 
+    # fetch_informe_detail call is cached at the bandeja layer; on resultado
+    # we look up the result via session_state.results_by_id (fast, in-memory)
+    # and fall back to a single fetch only when the detail isn't available.
     detail = None
     informe_id = st.session_state.get("selected_informe_id")
     if informe_id:
         try:
-            detail = api.fetch_informe_detail(informe_id)
+            from screens.bandeja import _cached_fetch_detail
+            detail = _cached_fetch_detail(informe_id)
         except api.BackendError:
             detail = None
 
@@ -166,66 +157,90 @@ def _render_hero(
     )
 
 
+def _trace_entry_by_tool(trace: list[Any], tool: str) -> Optional[Any]:
+    """Find the first trace entry matching a tool name, accepting dataclass
+    or dict shapes."""
+    for e in trace:
+        if utils.entry_field(e, "tool") == tool:
+            return e
+    return None
+
+
+def _trace_output(entry: Any) -> dict:
+    """Get the output dict off a trace entry, or {} if missing/wrong shape."""
+    if entry is None:
+        return {}
+    o = utils.entry_field(entry, "output")
+    return o if isinstance(o, dict) else {}
+
+
+def _opt_bool(value: Any) -> Optional[bool]:
+    """Treat True/False as themselves, anything else (None, missing, str) as
+    None — so missing-field cases route to neutral 'na' instead of red 'bad'."""
+    if isinstance(value, bool):
+        return value
+    return None
+
+
 def _render_checks(result: api.ProcesarResponse) -> None:
     """Build the check-row list dynamically from whatever the trace contains."""
-    def _get(tool: str) -> Optional[Any]:
-        for e in result.trace:
-            t = e.tool if hasattr(e, "tool") else (e.get("tool") if isinstance(e, dict) else "")
-            if t == tool:
-                return e
-        return None
-
-    def _out(entry: Any) -> dict:
-        if entry is None:
-            return {}
-        o = entry.output if hasattr(entry, "output") else (entry.get("output") if isinstance(entry, dict) else None)
-        return o if isinstance(o, dict) else {}
-
-    poliza = _get("get_poliza_paciente")
-    cob = _get("get_cobertura")
-    car = _get("verificar_carencia")
-    docs = _get("validar_documentos")
+    poliza = _trace_entry_by_tool(result.trace, "get_poliza_paciente")
+    cob = _trace_entry_by_tool(result.trace, "get_cobertura")
+    car = _trace_entry_by_tool(result.trace, "verificar_carencia")
+    docs = _trace_entry_by_tool(result.trace, "validar_documentos")
 
     rows: list[dict[str, Any]] = []
     if poliza:
-        po = _out(poliza)
+        po = _trace_output(poliza)
+        estado = po.get("estado")
+        ok: Optional[bool] = (estado == "Vigente") if estado else None
         rows.append({
             "label": "Vigencia de la póliza",
-            "detail": f"{po.get('numero', '—')} · {po.get('estado', '—')}",
-            "ok": po.get("estado") == "Vigente",
+            "detail": f"{po.get('numero') or '—'} · {estado or '—'}",
+            "ok": ok,
         })
     if cob:
-        co = _out(cob)
-        cubierto = co.get("cubierto") is not False
+        co = _trace_output(cob)
+        cubierto = _opt_bool(co.get("cubierto"))
         rows.append({
             "label": "Cobertura del procedimiento",
-            "detail": "Cubierto bajo el plan" if cubierto else "No cubierto bajo el plan",
+            "detail": (
+                "Cubierto bajo el plan" if cubierto is True
+                else "No cubierto bajo el plan" if cubierto is False
+                else "No evaluado"
+            ),
             "ok": cubierto,
         })
     if car:
-        ca = _out(car)
+        ca = _trace_output(car)
+        # Use `or 0` so None/missing renders as 0 — not the literal string 'None'.
+        transcurridos = ca.get("dias_transcurridos") or 0
+        requeridos = ca.get("dias_requeridos") or 0
+        cumple = _opt_bool(ca.get("cumple"))
         rows.append({
             "label": "Período de carencia",
-            "detail": (
-                f"{ca.get('dias_transcurridos', 0)} días transcurridos / "
-                f"{ca.get('dias_requeridos', 0)} requeridos"
-            ),
-            "ok": ca.get("cumple") is True,
+            "detail": f"{transcurridos} días transcurridos / {requeridos} requeridos",
+            "ok": cumple,
             "extra": (
-                f"Faltan {ca.get('dias_faltantes', 0)} días"
-                if ca.get("cumple") is False else None
+                f"Faltan {ca.get('dias_faltantes') or 0} días"
+                if cumple is False else None
             ),
         })
-    elif cob and _out(cob).get("cubierto") is False:
+    elif cob and _trace_output(cob).get("cubierto") is False:
         rows.append({"label": "Período de carencia", "detail": "No evaluado — cobertura excluida", "ok": None})
 
     if docs:
-        do = _out(docs)
+        do = _trace_output(docs)
         falt = do.get("documentos_faltantes") or []
-        ok = do.get("completo") is True
+        ok = _opt_bool(do.get("completo"))
         rows.append({
             "label": "Documentos requeridos",
-            "detail": "Completos" if ok else f"Faltan {len(falt)} documento{'s' if len(falt) != 1 else ''}",
+            "detail": (
+                "Completos" if ok is True
+                else f"Faltan {len(falt)} documento{'s' if len(falt) != 1 else ''}"
+                if ok is False
+                else "No evaluado"
+            ),
             "ok": ok,
         })
     else:
@@ -301,12 +316,12 @@ def _render_registro(decision: Optional[api.Decision], trace: list[Any]) -> None
 
 
 def _decision_id_from_trace(trace: list[Any]) -> str:
-    for entry in trace:
-        tool = entry.tool if hasattr(entry, "tool") else (entry.get("tool") if isinstance(entry, dict) else "")
-        if tool == "emitir_decision":
-            output = entry.output if hasattr(entry, "output") else (entry.get("output") if isinstance(entry, dict) else None)
-            if isinstance(output, dict):
-                return output.get("decision_id", "") or ""
+    entry = _trace_entry_by_tool(trace, "emitir_decision")
+    if entry is None:
+        return ""
+    output = utils.entry_field(entry, "output")
+    if isinstance(output, dict):
+        return output.get("decision_id", "") or ""
     return ""
 
 
@@ -339,7 +354,7 @@ def _render_notificar() -> None:
 def _render_trace_summary(trace: list[Any]) -> None:
     rows_html = ""
     for i, entry in enumerate(trace):
-        tool = entry.tool if hasattr(entry, "tool") else (entry.get("tool") if isinstance(entry, dict) else "")
+        tool = utils.entry_field(entry, "tool") or ""
         meta = TOOL_META.get(tool, {"icon": "tool", "label": tool})
         rows_html += (
             f"<div class='trace-mini'>"
@@ -360,9 +375,9 @@ def _render_trace_summary(trace: list[Any]) -> None:
     # Full-trace expander for inspectors who want the raw payload
     with st.expander("Trace completo del agente"):
         for i, entry in enumerate(trace, 1):
-            tool = entry.tool if hasattr(entry, "tool") else (entry.get("tool") if isinstance(entry, dict) else "")
-            inp = entry.input if hasattr(entry, "input") else (entry.get("input", {}) if isinstance(entry, dict) else {})
-            out = entry.output if hasattr(entry, "output") else (entry.get("output") if isinstance(entry, dict) else None)
+            tool = utils.entry_field(entry, "tool") or ""
+            inp = utils.entry_field(entry, "input") or {}
+            out = utils.entry_field(entry, "output")
             st.markdown(
                 f"<div style='font-family:var(--mono); font-size:12px; font-weight:500; "
                 f"color:var(--brand-ink); margin:8px 0 4px;'>#{i} · {html.escape(tool)}</div>",

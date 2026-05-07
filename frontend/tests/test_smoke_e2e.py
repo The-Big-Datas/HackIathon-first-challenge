@@ -21,10 +21,18 @@ BACKEND = "http://localhost:8000"
 
 
 def _backend_alive() -> bool:
+    """Probe the stub backend. Catches only network-level errors (the dev
+    stub may be down) — does NOT swallow other exceptions which would mask
+    real test setup bugs."""
     try:
         r = requests.get(f"{BACKEND}/health", timeout=1.0)
-        return r.ok and r.json().get("ok") is True
-    except Exception:
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        return False
+    if not r.ok:
+        return False
+    try:
+        return r.json().get("ok") is True
+    except (ValueError, AttributeError):
         return False
 
 
