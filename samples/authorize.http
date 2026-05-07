@@ -1,0 +1,52 @@
+### Health check
+GET http://127.0.0.1:8000/health
+Accept: application/json
+
+### Pre-autorización: caso esperado pre-aprobado
+# Requiere registros en Notion: report_id="RPT-001" y patient_id="PAT-123"
+POST http://127.0.0.1:8000/authorize
+Content-Type: application/json
+
+{
+  "report_id": "RPT-001",
+  "patient_id": "PAT-123"
+}
+
+### Pre-autorización: caso con documentos faltantes
+# El informe en Notion no tiene clinical_notes ni attachments
+POST http://127.0.0.1:8000/authorize
+Content-Type: application/json
+
+{
+  "report_id": "RPT-002",
+  "patient_id": "PAT-456"
+}
+
+### Pre-autorización: caso con carencia incumplida
+# La póliza tiene waiting_periods_months y la fecha solicitada cae antes del periodo
+POST http://127.0.0.1:8000/authorize
+Content-Type: application/json
+
+{
+  "report_id": "RPT-003",
+  "patient_id": "PAT-789"
+}
+
+### Pre-autorización: procedimiento excluido
+# El procedure_code aparece en excluded_procedures de la póliza
+POST http://127.0.0.1:8000/authorize
+Content-Type: application/json
+
+{
+  "report_id": "RPT-004",
+  "patient_id": "PAT-321"
+}
+
+### Pre-autorización: paciente inexistente (debe devolver needs_review)
+POST http://127.0.0.1:8000/authorize
+Content-Type: application/json
+
+{
+  "report_id": "RPT-NONE",
+  "patient_id": "PAT-NONE"
+}
