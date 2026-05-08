@@ -1,11 +1,9 @@
 """Bandeja screen — single-card table where each row is one clickable element.
 
 Click handling uses a query-param link pattern: each row is wrapped in
-``<a href="?open=ID">``. At the top of ``render()`` we read the query
-param, validate it against the informe-id allowlist, clear it, and route
-to the detalle stage. This keeps the entire row as one visual unit while
-the validation gate prevents path-traversal/oversize/unicode attacks
-through the URL.
+``<a href="?id=ID">``. The actual routing is centralized in
+``state.sync_from_url()`` (called from app.py) so the URL stays the
+source of truth and the browser back button works.
 
 Per-row detail enrichment is parallelized via ThreadPoolExecutor and
 cached for 60s with ``st.cache_data`` so reruns don't re-fetch.
@@ -63,19 +61,8 @@ def _fetch_details_parallel(
 
 
 def render() -> None:
-    # Whole-row click handler. The link sets ?open=<id>; we read it on the
-    # next rerun, validate against the allowlist, clear it, and navigate.
-    qp = st.query_params
-    if "open" in qp:
-        target = qp.get("open") or ""
-        del st.query_params["open"]
-        if state.is_valid_informe_id(target):
-            state.go_to_detalle(target)
-            return  # state.go_to_detalle calls st.rerun(); not reached.
-        # Invalid id: drop silently. The user-visible result is just a no-op
-        # navigation; no error_panel because this is most likely a stale link
-        # rather than user-actionable.
-
+    # Row-click routing is handled centrally by state.sync_from_url() in
+    # app.py — the link sets ?id=<id> and the URL drives the stage.
     trailing = (
         f"<button class='hdr-btn' type='button'>{icon('filter', 14)}<span>Filtrar</span></button>"
         f"<button class='hdr-btn' type='button'>{icon('download', 14)}<span>Exportar</span></button>"
@@ -97,7 +84,7 @@ def render() -> None:
         return
 
     if not informes:
-        st.html(
+        components.render_html(
             """
             <div class='card'>
               <div class='card-b' style='text-align:center; padding:40px;'>
@@ -179,7 +166,7 @@ def render() -> None:
             urgencia_html = components.urgency_chip("Electiva")
 
         rows_html += (
-            f"<a class='inbox-row-link' href='?open={html.escape(inf.id_informe)}' target='_self'>"
+            f"<a class='inbox-row-link' href='?id={html.escape(inf.id_informe)}' target='_self'>"
             f"<div class='inbox-row'>"
             f"<div class='id'>{html.escape(inf.id_informe)}</div>"
             f"<div>"
@@ -199,7 +186,7 @@ def render() -> None:
             f"</a>"
         )
 
-    st.html(
+    components.render_html(
         f"""
         <div class='card'>
           <div class='card-h'>
@@ -225,7 +212,7 @@ def render() -> None:
     )
 
     if detail_failed_ids:
-        st.html(
+        components.render_html(
             f"""
             <div style='margin-top:10px; padding:8px 14px; background:var(--warn-bg);
                         color:var(--warn-ink); border:1px solid rgba(176,114,6,.25);
@@ -237,7 +224,7 @@ def render() -> None:
             """
         )
 
-    st.html(
+    components.render_html(
         f"""
         <div style='margin-top:14px; display:flex; gap:10px; align-items:center;
                     color:var(--ink-3); font-size:12px;'>

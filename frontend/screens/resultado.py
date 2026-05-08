@@ -132,7 +132,7 @@ def _render_hero(
         summary_parts.append(f"<span class='mono'>{html.escape(cedula)}</span>")
     procedure_summary = " · ".join(summary_parts) if summary_parts else ""
 
-    st.html(
+    components.render_html(
         f"""
         <div class='verdict-hero {tone}'>
           <div class='corner-circle'></div>
@@ -328,7 +328,7 @@ def _decision_id_from_trace(trace: list[Any]) -> str:
 def _render_notificar() -> None:
     cols = st.columns([6, 2])
     with cols[0]:
-        st.html(
+        components.render_html(
             f"""
             <div class='card' style='background: linear-gradient(165deg, var(--brand-bg), #fff);
                                       border-color: rgba(23,99,209,.18);'>
@@ -347,7 +347,7 @@ def _render_notificar() -> None:
             """
         )
     with cols[1]:
-        st.html("<div style='height:18px;'></div>")
+        components.render_html("<div style='height:18px;'></div>")
         st.button("Enviar", key="res_notify", type="primary", use_container_width=True, disabled=True)
 
 

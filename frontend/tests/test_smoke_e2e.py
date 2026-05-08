@@ -50,14 +50,14 @@ def _new_app() -> AppTest:
 
 
 def _click_open(at: AppTest, informe_id: str) -> None:
-    """Simulate a row click by setting the ?open=<id> query param.
+    """Simulate a row click by setting the ?id=<id> query param.
 
-    The row HTML is wrapped in an <a href="?open=ID"> link; clicking it
-    sets the query param, and the bandeja screen routes on rerun. AppTest
-    can't synthesize an HTML <a> click, but it can mutate query_params
-    and re-run, which exercises the same code path.
+    The row HTML is wrapped in an <a href="?id=ID"> link; clicking it
+    sets the query param, and state.sync_from_url() routes on rerun.
+    AppTest can't synthesize an HTML <a> click, but it can mutate
+    query_params and re-run, which exercises the same code path.
     """
-    at.query_params["open"] = informe_id
+    at.query_params["id"] = informe_id
     at.run()
 
 

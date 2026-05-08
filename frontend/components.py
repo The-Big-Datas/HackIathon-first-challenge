@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import html
+import textwrap
 from typing import Any, Callable, Iterable, Optional
 
 import streamlit as st
 
 from api import BackendError
 from icons import icon
+
+
+def render_html(content: str) -> None:
+    """Render raw HTML preserving inline SVG.
+
+    Uses ``st.markdown(unsafe_allow_html=True)`` instead of ``st.html`` because
+    Streamlit's ``st.html`` runs DOMPurify with a config that strips ``<svg>``
+    elements in current versions, which breaks the inline icon system.
+
+    Dedents and drops blank lines so an empty f-string substitution
+    can't leave a blank line that splits the HTML block — once split,
+    the indented remainder is parsed as a code block and the tags
+    render as escaped text.
+    """
+    dedented = textwrap.dedent(content)
+    compact = "\n".join(line for line in dedented.splitlines() if line.strip())
+    st.markdown(compact, unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -40,9 +58,15 @@ def render_sidebar(active_stage: str, *, total_informes: int = 0) -> None:
         )
         cls = "side-item active" if active else "side-item"
         count_html = f"<span class='count'>{count}</span>" if count else ""
-        op_html += (
-            f"<div class='{cls}'>{icon(ico, 16)}<span>{html.escape(label)}</span>{count_html}</div>"
-        )
+        inner = f"{icon(ico, 16)}<span>{html.escape(label)}</span>{count_html}"
+        # Items with a target stage become anchor links; clicks set ?nav=<stage>
+        # which the app entry point reads to drive navigation.
+        if stage is not None:
+            op_html += (
+                f"<a class='{cls}' href='?nav={stage}' target='_self'>{inner}</a>"
+            )
+        else:
+            op_html += f"<div class='{cls} disabled'>{inner}</div>"
 
     cfg_html = "".join(
         f"<div class='side-item'>{icon(ico, 16)}<span>{html.escape(label)}</span></div>"
@@ -50,7 +74,7 @@ def render_sidebar(active_stage: str, *, total_informes: int = 0) -> None:
     )
 
     with st.sidebar:
-        st.html(
+        render_html(
             f"""
             <div class='side-brand'>
               <div class='mark'>{icon('shield-plus', 18, color='white')}</div>
@@ -93,7 +117,7 @@ def topbar(*, breadcrumb: list[tuple[str, bool]], live_text: str = "Notion conec
         else:
             crumb_html += html.escape(text)
 
-    st.html(
+    render_html(
         f"""
         <div class='topbar'>
           <div class='crumb'>{crumb_html}</div>
@@ -112,7 +136,7 @@ def topbar(*, breadcrumb: list[tuple[str, bool]], live_text: str = "Notion conec
 # ============================================================================
 
 def page_header(title: str, sub: str = "", *, badges_html: str = "", trailing_html: str = "") -> None:
-    st.html(
+    render_html(
         f"""
         <div style='display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:18px; gap:16px; flex-wrap:wrap;'>
           <div style='min-width:0;'>
@@ -145,7 +169,7 @@ def stat_tile(label: str, value: Any, *, tone: str = "brand", ico: str = "inbox"
 
 
 def stat_grid(tiles: Iterable[str]) -> None:
-    st.html("<div class='stat-grid'>" + "".join(tiles) + "</div>")
+    render_html("<div class='stat-grid'>" + "".join(tiles) + "</div>")
 
 
 # ============================================================================
@@ -191,7 +215,7 @@ def card_html(title: str, body_html: str, *, icon_name: str = "", meta_html: str
         if icon_name else ""
     )
     meta = f"<div class='meta'>{meta_html}</div>" if meta_html else ""
-    st.html(
+    render_html(
         f"""
         <div class='card'>
           <div class='card-h'>{icon_html}<h3>{html.escape(title)}</h3>{meta}</div>
@@ -209,7 +233,7 @@ def card_html_no_padding(title: str, inner_html: str, *, icon_name: str = "", me
         if icon_name else ""
     )
     meta = f"<div class='meta'>{meta_html}</div>" if meta_html else ""
-    st.html(
+    render_html(
         f"""
         <div class='card'>
           <div class='card-h'>{icon_html}<h3>{html.escape(title)}</h3>{meta}</div>
@@ -272,7 +296,7 @@ def error_panel(err: BackendError, *, on_retry: Optional[Callable[[], None]] = N
         "</div>"
         if err.kind == "timeout" else ""
     )
-    st.html(
+    render_html(
         f"""
         <div class='card' style='border-color: rgba(192,57,43,.25);'>
           <div class='card-h' style='background: var(--bad-bg);'>

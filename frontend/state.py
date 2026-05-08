@@ -62,7 +62,35 @@ def _set_stage(stage: Stage, **updates: Any) -> None:
         st.session_state[key] = value
 
 
+def sync_from_url() -> None:
+    """Reconcile session state with the URL on every rerun.
+
+    Without this, the browser back button navigates URL history but
+    leaves server-side ``session_state.stage`` stale — so backing out of
+    a detail page lands on ``/`` while the server still renders detalle.
+
+    Rule: if the URL has no ``id``, force bandeja. If it has a different
+    ``id`` than what's in session, treat it as a fresh detalle entry.
+    Same id keeps the existing sub-stage (procesando/resultado), so
+    button-driven transitions inside a single informe still work without
+    needing to round-trip through the URL.
+    """
+    qp = st.query_params
+    url_id = qp.get("id")
+
+    if not url_id or not is_valid_informe_id(url_id):
+        if st.session_state.get("stage") != "bandeja":
+            st.session_state.stage = "bandeja"
+            st.session_state.selected_informe_id = None
+        return
+
+    if st.session_state.get("selected_informe_id") != url_id:
+        st.session_state.selected_informe_id = url_id
+        st.session_state.stage = "detalle"
+
+
 def go_to_bandeja() -> None:
+    st.query_params.clear()
     _set_stage("bandeja", selected_informe_id=None)
     st.rerun()
 
@@ -72,6 +100,7 @@ def go_to_detalle(informe_id: str) -> None:
         # Refuse the navigation rather than passing junk down to the API client.
         st.session_state.last_error = "Identificador inválido."
         return
+    st.query_params["id"] = informe_id
     _set_stage("detalle", selected_informe_id=informe_id)
     st.rerun()
 
@@ -80,6 +109,7 @@ def go_to_procesando(informe_id: str) -> None:
     if not is_valid_informe_id(informe_id):
         st.session_state.last_error = "Identificador inválido."
         return
+    st.query_params["id"] = informe_id
     _set_stage("procesando", selected_informe_id=informe_id, last_result=None)
     st.rerun()
 
@@ -96,6 +126,8 @@ def go_to_resultado(result: Any) -> None:
         results = st.session_state.results_by_id or {}
         results[informe_id] = result
         st.session_state.results_by_id = results
+    if informe_id:
+        st.query_params["id"] = informe_id
     _set_stage("resultado", last_result=result)
     st.rerun()
 

@@ -80,7 +80,7 @@ def render(informe_id: Optional[str]) -> None:
             state.go_to_bandeja()
             return
     with head_cols[1]:
-        st.html(
+        components.render_html(
             f"""
             <div style='display:flex; align-items:center; gap:10px; flex-wrap:wrap;'>
               <h1 class='page-h1'>Analizando informe</h1>

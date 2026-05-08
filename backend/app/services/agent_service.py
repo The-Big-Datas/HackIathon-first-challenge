@@ -178,9 +178,15 @@ class AgentError(Exception):
     pass
 
 
-def run_authorization(id_informe: str, cedula: str) -> AuthorizeResponse:
+def _run_agent_loop(
+    id_informe: str, cedula: str
+) -> tuple[list[dict], Optional[dict], Optional[dict], str]:
+    """Ejecuta el tool-use loop. Devuelve (trace, last_submit_input,
+    decision_record, final_text)."""
     decision_record: Optional[dict[str, Any]] = None
     last_submit_input: Optional[dict[str, Any]] = None
+    trace: list[dict] = []
+    final_text = ""
 
     def _dispatch(name: str, args: dict) -> dict:
         nonlocal decision_record, last_submit_input
@@ -224,6 +230,10 @@ def run_authorization(id_informe: str, cedula: str) -> AuthorizeResponse:
         )
         messages.append({"role": "assistant", "content": resp.content})
 
+        for block in resp.content:
+            if block.type == "text" and block.text:
+                final_text = block.text
+
         if resp.stop_reason != "tool_use":
             break
 
@@ -231,17 +241,27 @@ def run_authorization(id_informe: str, cedula: str) -> AuthorizeResponse:
         for block in resp.content:
             if block.type != "tool_use":
                 continue
+            input_data = dict(block.input) if isinstance(block.input, dict) else {}
             try:
                 result = _dispatch(block.name, block.input)
-                content = json.dumps(result, default=str, ensure_ascii=False)
+                trace.append(
+                    {"tool": block.name, "input": input_data, "output": result}
+                )
                 tool_results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": content,
+                        "content": json.dumps(result, default=str, ensure_ascii=False),
                     }
                 )
             except Exception as exc:
+                trace.append(
+                    {
+                        "tool": block.name,
+                        "input": input_data,
+                        "output": {"error": str(exc)},
+                    }
+                )
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -254,6 +274,13 @@ def run_authorization(id_informe: str, cedula: str) -> AuthorizeResponse:
     else:
         raise AgentError("Limite de iteraciones excedido sin emitir decision")
 
+    return trace, last_submit_input, decision_record, final_text
+
+
+def run_authorization(id_informe: str, cedula: str) -> AuthorizeResponse:
+    _trace, last_submit_input, decision_record, _final_text = _run_agent_loop(
+        id_informe, cedula
+    )
     if decision_record is None or last_submit_input is None:
         raise AgentError("El agente termino sin llamar submit_decision")
 
@@ -267,3 +294,32 @@ def run_authorization(id_informe: str, cedula: str) -> AuthorizeResponse:
         id_decision=decision_record["id_decision"],
         timestamp=decision_record["timestamp"],
     )
+
+
+def run_procesar(id_informe: str) -> dict:
+    """Wrapper de /procesar/{id}: deriva la cedula del informe, corre el
+    agente y devuelve {trace, final_text, decision} para el front."""
+    informe_data = notion_service.fetch_informe(id_informe)
+    paciente = informe_data.get("paciente") or {}
+    cedula = paciente.get("cedula", "")
+    if not cedula:
+        raise AgentError(f"Informe {id_informe} no tiene paciente con cedula")
+
+    trace, last_submit_input, _decision_record, final_text = _run_agent_loop(
+        id_informe, cedula
+    )
+
+    decision_payload = None
+    if last_submit_input:
+        decision_payload = {
+            "decision": last_submit_input["decision"],
+            "justificacion": last_submit_input["justificacion"],
+            "clausula_aplicada": last_submit_input.get("clausula_aplicada", "") or "",
+            "documentos_faltantes": last_submit_input.get("documentos_faltantes") or [],
+        }
+
+    return {
+        "trace": trace,
+        "final_text": final_text,
+        "decision": decision_payload,
+    }

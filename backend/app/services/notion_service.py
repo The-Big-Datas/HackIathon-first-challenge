@@ -192,6 +192,97 @@ def fetch_cobertura(cedula: str, codigo_cpt: str) -> dict:
     }
 
 
+def list_informes_summary(page_size: int = 100) -> list[dict]:
+    """Lista resumida de informes medicos (id, descripcion, hospital) para la
+    bandeja del front. Pagina hasta agotar la DB."""
+    out: list[dict] = []
+    cursor: Optional[str] = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "data_source_id": settings.NOTION_DB_INFORMES,
+            "page_size": page_size,
+        }
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        r = notion.data_sources.query(**kwargs)
+        for page in r.get("results", []):
+            p = page["properties"]
+            out.append(
+                {
+                    "id_informe": _title(p["id_informe"]),
+                    "descripcion_procedimiento": _rich_text(p["descripcion_procedimiento"]),
+                    "hospital": _rich_text(p["hospital"]),
+                }
+            )
+        if not r.get("has_more"):
+            break
+        cursor = r.get("next_cursor")
+    return out
+
+
+def fetch_informe_full(id_informe: str) -> dict:
+    """Detalle enriquecido del informe: datos del informe + paciente + poliza
+    + plan, en shape plano (lo que espera el front)."""
+    base = fetch_informe(id_informe)
+    informe = base["informe"]
+    paciente = base.get("paciente") or {}
+
+    poliza: dict = {}
+    plan: dict = {}
+    if paciente.get("poliza_relation_ids"):
+        pol_page = notion.pages.retrieve(paciente["poliza_relation_ids"][0])
+        poliza = _read_poliza(pol_page)
+        if poliza.get("plan_relation_ids"):
+            plan_page = notion.pages.retrieve(poliza["plan_relation_ids"][0])
+            plan = _read_plan(plan_page)
+
+    return {
+        "id_informe": informe.get("id_informe", ""),
+        "paciente_cedula": paciente.get("cedula", "") or "",
+        "paciente_nombre": paciente.get("nombre", "") or "",
+        "paciente_fecha_nacimiento": paciente.get("fecha_nacimiento", "") or "",
+        "paciente_sexo": "",
+        "poliza_numero": poliza.get("numero", "") or "",
+        "plan_nombre": plan.get("nombre", "") or "",
+        "plan_nivel": plan.get("nivel", "") or "",
+        "plan_id": plan.get("page_id", "") or "",
+        "poliza_fecha_alta": poliza.get("fecha_alta", "") or "",
+        "poliza_estado": poliza.get("estado", "") or "",
+        "fecha_emision": informe.get("fecha_emision", "") or "",
+        "hospital": informe.get("hospital", "") or "",
+        "medico_tratante": informe.get("medico_tratante", "") or "",
+        "diagnostico_cie10": informe.get("diagnostico_cie10", "") or "",
+        "diagnostico_desc": "",
+        "procedimiento_cpt": informe.get("procedimiento_cpt", "") or "",
+        "descripcion_procedimiento": informe.get("descripcion_procedimiento", "") or "",
+        "justificacion_clinica": informe.get("justificacion_clinica", "") or "",
+        "fecha_programada": informe.get("fecha_programada", "") or "",
+        "urgencia": "",
+        "documentos_adjuntos": list(informe.get("documentos_adjuntos") or []),
+    }
+
+
+def fetch_cobertura_by_plan_page(codigo_cpt: str, plan_page_id: str) -> Optional[dict]:
+    """Devuelve la regla de cobertura para (CPT, plan), o None si no existe."""
+    page = _query_one(
+        settings.NOTION_DB_COBERTURAS,
+        {
+            "and": [
+                {"property": "plan", "relation": {"contains": plan_page_id}},
+                {"property": "codigo_cpt", "rich_text": {"equals": codigo_cpt}},
+            ]
+        },
+    )
+    if not page:
+        return None
+    cob = _read_cobertura(page)
+    return {
+        "cubierto": cob["cubierto"],
+        "dias_carencia": int(cob.get("dias_carencia") or 0),
+        "documentos_requeridos": cob.get("documentos_requeridos") or [],
+    }
+
+
 def submit_decision(
     id_informe: str,
     decision: str,

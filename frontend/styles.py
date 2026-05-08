@@ -119,7 +119,10 @@ button[data-testid="stSidebarCollapsedControl"] {
   padding: 8px 10px; border-radius: 7px;
   color: #aab8cb !important; font-size: 13px;
 }
+a.side-item { text-decoration: none; cursor: pointer; }
+a.side-item:hover { background: rgba(255,255,255,.04); color: #fff !important; }
 .side-item.active { background: rgba(255,255,255,.06); color: #fff !important; font-weight: 500; }
+.side-item.disabled { cursor: default; opacity: .55; }
 .side-item svg { opacity: .85; flex-shrink: 0; }
 .side-item.active svg { opacity: 1; }
 .side-item .count {

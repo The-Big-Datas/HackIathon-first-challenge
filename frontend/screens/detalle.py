@@ -73,7 +73,7 @@ def render(informe_id: Optional[str]) -> None:
             sub_text = " · ".join(parts)
         elif slim:
             sub_text = f"desde {html.escape(slim.hospital or '—')}"
-        st.html(
+        components.render_html(
             f"""
             <div style='min-width:0;'>
               <div style='display:flex; align-items:center; gap:10px; flex-wrap:wrap;'>
@@ -97,7 +97,7 @@ def render(informe_id: Optional[str]) -> None:
             state.go_to_procesando(informe_id)
 
     if detail_err is not None and detail_err.kind != "http":
-        st.html(
+        components.render_html(
             f"<div style='color: var(--ink-3); font-size: 12px; padding: 8px 0;'>"
             f"Detalle limitado: {html.escape(str(detail_err))}</div>"
         )
@@ -206,7 +206,7 @@ def _render_left_full(d: api.InformeDetail) -> None:
 
 
 def _render_left_slim(slim: Optional[api.InformeListItem], informe_id: str) -> None:
-    st.html(
+    components.render_html(
         "<div style='font-size:12px; color:var(--ink-3); margin-bottom:8px;'>"
         "Vista resumida — el backend aún no expone "
         "<span class='mono'>GET /informes/{id}</span> para los detalles completos."
@@ -240,7 +240,7 @@ def _render_agent_ready(informe_id: str) -> None:
             f"</div>"
         )
 
-    st.html(
+    components.render_html(
         f"""
         <div class='agent-ready'>
           <div class='head'>
@@ -263,7 +263,7 @@ def _render_agent_ready(informe_id: str) -> None:
         use_container_width=True,
     ):
         state.go_to_procesando(informe_id)
-    st.html(
+    components.render_html(
         "<div style='font-size:11px; color:var(--ink-3); text-align:center; margin-top:6px;'>"
         "~5–8 segundos · trace completo registrado</div>"
     )

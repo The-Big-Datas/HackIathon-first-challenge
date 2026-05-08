@@ -26,6 +26,19 @@ st.set_page_config(
 state.init_session()
 styles.inject()
 
+# Sidebar nav clicks set ?nav=<stage>. Capture, validate, clear, route.
+if "nav" in st.query_params:
+    target = st.query_params.get("nav") or ""
+    del st.query_params["nav"]
+    if target == "bandeja":
+        state.go_to_bandeja()
+        # state.go_to_bandeja calls st.rerun(); not reached.
+
+# URL is the source of truth for which informe (if any) is open. Without
+# this sync, the browser back button leaves session_state.stage stale —
+# user lands on `/` while server still renders detalle.
+state.sync_from_url()
+
 stage = st.session_state.stage
 informe_id = st.session_state.selected_informe_id
 
