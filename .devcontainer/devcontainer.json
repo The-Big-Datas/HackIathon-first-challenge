@@ -26,8 +26,7 @@
   "forwardPorts": [8000, 8501, 3000],
   "portsAttributes": {
     "8000": { "label": "Backend (FastAPI)",       "onAutoForward": "notify" },
-    "8501": { "label": "Frontend (Streamlit)",    "onAutoForward": "notify" },
-    "3000": { "label": "Frontend (static HTML)",  "onAutoForward": "notify" }
+    "8501": { "label": "Frontend (Streamlit)",    "onAutoForward": "notify" }
   },
 
   "postCreateCommand": "bash .devcontainer/post-create.sh",
