@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 import streamlit as st
@@ -14,7 +15,13 @@ import components
 import state
 from icons import icon
 
-STEP_REVEAL_DELAY_S = 0.2
+# Total animation budget while the agent runs in the background. Tuned to
+# the 5–15s typical agent wall time: 6 steps × ~0.8s active + 0.2s done
+# gives ~6s, then the loop falls into a "waiting on backend" idle that
+# keeps the elapsed-time counter ticking until the future resolves.
+STEP_ACTIVE_S = 0.8
+STEP_DONE_S = 0.2
+WAIT_TICK_S = 0.25
 
 # Tool metadata mirroring the design's TOOL_META — labels, source captions
 # and Spanish narration the thinking transcript reads off.
@@ -107,90 +114,100 @@ def render(informe_id: Optional[str]) -> None:
     _render_telemetry(telem_box, tokens=0, elapsed=0.0, tools_done=0)
     _render_neuro_note(neuro_box)
 
-    # Fire the actual backend call (5–15s)
+    # Fire the backend call in a worker thread so we can animate progress
+    # while it's in flight. Streamlit's script runs synchronously per
+    # rerun, so without this the page sits frozen on the initial frame
+    # for the whole 5–15s of the agent run and the user sees nothing.
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(api.procesar_informe, informe_id)
     start = time.time()
-    try:
-        response = api.procesar_informe(informe_id)
-    except api.BackendError as err:
-        components.error_panel(err, on_retry=lambda: st.rerun(), key_prefix="proc_err")
-        if st.button("← Volver a la bandeja", key="proc_back_err"):
-            state.go_to_bandeja()
-        return
+    revealed: set[int] = set()
+    transcript: list[tuple[int, str]] = []
+    tokens = 0
 
-    # Defensive race check: if the user navigated away during the long
-    # synchronous call (cross-tab Procesar mid-flight scenario), don't
-    # clobber their navigation by transitioning to resultado.
+    try:
+        # Phase 1 — sequentially light up each placeholder step. We don't
+        # have per-tool streaming from the backend yet, so the reveal is
+        # paced on a fixed cadence; if the future resolves mid-reveal we
+        # fast-forward in phase 2.
+        for idx, name in enumerate(TOOL_ORDER):
+            if future.done():
+                break
+            narr = TOOL_META[name].get("narr", "")
+            if narr:
+                transcript.append((idx, narr))
+
+            _render_timeline(
+                timeline_inner,
+                revealed_idxs=revealed,
+                trace=[],
+                active_idx=idx,
+                elapsed=time.time() - start,
+                total_steps=len(TOOL_ORDER),
+            )
+            _render_thinking(thinking_box, transcript_lines=transcript, active_idx=idx)
+            _render_telemetry(
+                telem_box,
+                tokens=tokens + 1500,
+                elapsed=time.time() - start,
+                tools_done=len(revealed),
+            )
+            _wait_or_resolve(future, STEP_ACTIVE_S)
+
+            revealed.add(idx)
+            tokens += 1500
+            _render_timeline(
+                timeline_inner,
+                revealed_idxs=revealed,
+                trace=[],
+                active_idx=-1,
+                elapsed=time.time() - start,
+                total_steps=len(TOOL_ORDER),
+            )
+            _render_telemetry(
+                telem_box,
+                tokens=tokens,
+                elapsed=time.time() - start,
+                tools_done=len(revealed),
+            )
+            _wait_or_resolve(future, STEP_DONE_S)
+
+        # Phase 2 — backend still working after all placeholders are lit.
+        # Keep the elapsed counter ticking so the page feels alive.
+        while not future.done():
+            _render_telemetry(
+                telem_box,
+                tokens=tokens,
+                elapsed=time.time() - start,
+                tools_done=len(revealed),
+            )
+            time.sleep(WAIT_TICK_S)
+
+        try:
+            response = future.result()
+        except api.BackendError as err:
+            components.error_panel(err, on_retry=lambda: st.rerun(), key_prefix="proc_err")
+            if st.button("← Volver a la bandeja", key="proc_back_err"):
+                state.go_to_bandeja()
+            return
+    finally:
+        executor.shutdown(wait=False)
+
+    # Defensive race check: if the user navigated away during the call,
+    # don't clobber their navigation by transitioning to resultado.
     current_id = st.session_state.get("selected_informe_id")
     current_stage = st.session_state.get("stage")
     if current_id != entry_informe_id or current_stage != "procesando":
-        # User navigated away. Stash result for the original id (so the
-        # bandeja stat tiles still update) and exit without st.rerun.
         results = st.session_state.get("results_by_id") or {}
         results[entry_informe_id] = response
         st.session_state.results_by_id = results
         state.mark_processed(entry_informe_id)
         return
 
-    pairs = _match_placeholders(response.trace)
-
-    # Dedup: keep first occurrence per placeholder index. Duplicate tool calls
-    # in the trace would otherwise overwrite output in idx_to_entry, lose the
-    # first call's data, double-count tokens, and double-append narration.
-    seen_idxs: set[int] = set()
-    deduped_pairs: list[tuple[int, Any]] = []
-    for idx, entry in pairs:
-        if idx in seen_idxs:
-            continue
-        seen_idxs.add(idx)
-        deduped_pairs.append((idx, entry))
-
-    # Reveal each step sequentially.
-    # ORDERING FIX: render the timeline with active_idx=idx FIRST (so the
-    # pulse-dot + 'Ejecutando…' badge is visible during the sleep), THEN add
-    # to revealed and re-render in 'done' state. The previous order added to
-    # revealed before rendering, which made the active-state branch dead code.
-    revealed: set[int] = set()
-    transcript: list[tuple[int, str]] = []
-    tokens = 0
-    ACTIVE_FRAME_S = STEP_REVEAL_DELAY_S * 0.6  # most of the budget on 'active'
-    DONE_FRAME_S = STEP_REVEAL_DELAY_S * 0.4
-    for idx, entry in deduped_pairs:
-        narr = TOOL_META.get(_entry_tool(entry), {}).get("narr", "")
-        if narr:
-            transcript.append((idx, narr))
-
-        # Active frame: pulse-dot + Ejecutando badge for this idx
-        _render_timeline(
-            timeline_inner,
-            revealed_idxs=revealed,
-            trace=response.trace,
-            active_idx=idx,
-            elapsed=time.time() - start,
-            total_steps=len(TOOL_ORDER),
-        )
-        _render_thinking(thinking_box, transcript_lines=transcript, active_idx=idx)
-        _render_telemetry(
-            telem_box,
-            tokens=tokens + 1500,
-            elapsed=time.time() - start,
-            tools_done=len(revealed),
-        )
-        time.sleep(ACTIVE_FRAME_S)
-
-        # Done frame: now mark as completed
-        revealed.add(idx)
-        tokens += 1500
-        _render_timeline(
-            timeline_inner,
-            revealed_idxs=revealed,
-            trace=response.trace,
-            active_idx=-1,
-            elapsed=time.time() - start,
-            total_steps=len(TOOL_ORDER),
-        )
-        time.sleep(DONE_FRAME_S)
-
-    # Final state — no active step, all revealed
+    # Phase 3 — final frame: backfill any unrevealed slots from the real
+    # trace so the timeline ends with every step in 'done' state and the
+    # 'Ver output' details show real tool outputs.
+    revealed = set(range(len(TOOL_ORDER)))
     final_elapsed = time.time() - start
     _render_timeline(
         timeline_inner,
@@ -203,18 +220,23 @@ def render(informe_id: Optional[str]) -> None:
     _render_thinking(thinking_box, transcript_lines=transcript, active_idx=-1)
     _render_telemetry(telem_box, tokens=tokens, elapsed=final_elapsed, tools_done=len(revealed))
 
-    # Final defensive race check before clobbering navigation.
-    current_id = st.session_state.get("selected_informe_id")
-    current_stage = st.session_state.get("stage")
-    if current_id != entry_informe_id or current_stage != "procesando":
-        results = st.session_state.get("results_by_id") or {}
-        results[entry_informe_id] = response
-        st.session_state.results_by_id = results
-        state.mark_processed(entry_informe_id)
-        return
-
     state.mark_processed(informe_id)
     state.go_to_resultado(response)
+
+
+def _wait_or_resolve(future: Any, seconds: float) -> None:
+    """Sleep up to `seconds`, but cut short if the future resolves.
+
+    Without this, an early-finishing backend call would still wait the
+    full per-step budget and the user would feel pointless lag at the
+    end of the animation.
+    """
+    try:
+        future.result(timeout=seconds)
+    except Exception:
+        # Either timeout (still running) or the call raised — both are
+        # fine here. The caller checks future.done()/.result() afterward.
+        return
 
 
 def _match_placeholders(trace: list[Any]) -> list[tuple[int, Any]]:
