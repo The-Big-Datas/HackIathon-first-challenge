@@ -9,9 +9,9 @@ from notion_client import Client
 from app.config import settings
 
 # Notion 2025-09-03 introdujo data sources: cada database expone uno o más
-# data_sources, y `databases.query` deja de funcionar para bases creadas tras
-# esa versión. Hay que usar el endpoint `data_sources.query` y crear páginas
-# con parent `data_source_id` en lugar de `database_id`.
+# data_sources, y `databases.query` ya no aplica. Las variables NOTION_DB_*
+# del .env contienen data_source_ids (así los emite el seed), por eso se
+# pasan directamente al endpoint `data_sources.query`.
 NOTION_VERSION = "2025-09-03"
 
 notion = Client(auth=settings.NOTION_TOKEN, notion_version=NOTION_VERSION)
@@ -23,33 +23,10 @@ class NotFound(Exception):
     pass
 
 
-# ---------- Resolución database_id -> data_source_id ----------
-
-# Cache simple: los IDs son estables durante la vida del proceso.
-_DATA_SOURCE_CACHE: dict[str, str] = {}
-
-
-def _resolve_data_source(database_id: str) -> str:
-    """Devuelve el data_source_id primario asociado a un database_id."""
-    cached = _DATA_SOURCE_CACHE.get(database_id)
-    if cached:
-        return cached
-    db = notion.databases.retrieve(database_id=database_id)
-    sources = db.get("data_sources") or []
-    if not sources:
-        raise NotFound(
-            f"Database {database_id} no expone data_sources; ¿la integración tiene acceso?"
-        )
-    ds_id = sources[0]["id"]
-    _DATA_SOURCE_CACHE[database_id] = ds_id
-    return ds_id
-
-
-def _query_data_source(database_id: str, body: dict) -> dict:
+def _query_data_source(data_source_id: str, body: dict) -> dict:
     """POST /v1/data_sources/{id}/query usando el cliente del SDK."""
-    ds_id = _resolve_data_source(database_id)
     return notion.request(
-        path=f"data_sources/{ds_id}/query",
+        path=f"data_sources/{data_source_id}/query",
         method="POST",
         body=body,
     )
@@ -351,7 +328,7 @@ def submit_decision(
         }
 
     notion.pages.create(
-        parent={"data_source_id": _resolve_data_source(settings.NOTION_DB_DECISIONES)},
+        parent={"data_source_id": settings.NOTION_DB_DECISIONES},
         properties=properties,
     )
 
