@@ -9,18 +9,21 @@ load_dotenv(ENV_PATH)
 
 
 def _required(name: str) -> str:
-    val = os.environ.get(name)
-    if not val:
+    raw = os.environ.get(name)
+    if not raw:
         raise RuntimeError(
             f"Falta variable de entorno {name}. Revisa backend/.env "
             f"(ver docs/notion_setup.md)."
         )
-    return val
+    # strip() defiende contra saltos de línea o espacios al final que se
+    # cuelan al setear secretos (flyctl, pipes en PowerShell, .env con CRLF).
+    # Sin esto, urllib3 falla con "Invalid non-printable ASCII character".
+    return raw.strip()
 
 
 class Settings:
     ANTHROPIC_API_KEY: str = _required("ANTHROPIC_API_KEY")
-    CLAUDE_MODEL: str = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+    CLAUDE_MODEL: str = (os.environ.get("CLAUDE_MODEL") or "claude-sonnet-4-6").strip()
 
     NOTION_TOKEN: str = _required("NOTION_TOKEN")
     NOTION_DB_ASEGURADOS: str = _required("NOTION_DB_ASEGURADOS")
