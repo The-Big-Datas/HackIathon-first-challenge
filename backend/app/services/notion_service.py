@@ -54,8 +54,8 @@ def _relation_ids(prop: dict) -> list[str]:
 
 
 def _query_one(data_source_id: str, filter_: dict) -> Optional[dict]:
-    r = notion.data_sources.query(
-        data_source_id=data_source_id, filter=filter_, page_size=1
+    r = notion.databases.query(
+        database_id=data_source_id, filter=filter_, page_size=1
     )
     results = r.get("results") or []
     return results[0] if results else None
@@ -199,12 +199,12 @@ def list_informes_summary(page_size: int = 100) -> list[dict]:
     cursor: Optional[str] = None
     while True:
         kwargs: dict[str, Any] = {
-            "data_source_id": settings.NOTION_DB_INFORMES,
+            "database_id": settings.NOTION_DB_INFORMES,
             "page_size": page_size,
         }
         if cursor:
             kwargs["start_cursor"] = cursor
-        r = notion.data_sources.query(**kwargs)
+        r = notion.databases.query(**kwargs)
         for page in r.get("results", []):
             p = page["properties"]
             out.append(
@@ -318,7 +318,7 @@ def submit_decision(
         }
 
     notion.pages.create(
-        parent={"data_source_id": settings.NOTION_DB_DECISIONES},
+        parent={"database_id": settings.NOTION_DB_DECISIONES},
         properties=properties,
     )
 

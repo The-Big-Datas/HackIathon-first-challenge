@@ -30,12 +30,8 @@ DecisionValue = Literal["Aprobado", "Negado", "Documentos_Faltantes", "Unknown"]
 
 
 def get_backend_url() -> str:
-    """Read backend URL fresh — picks up env changes without reimport."""
-    try:
-        import streamlit as _st
-        return _st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "http://localhost:8000"))
-    except Exception:
-        return os.getenv("BACKEND_URL", "http://localhost:8000")
+    import streamlit as _st
+    return _st.secrets["BACKEND_URL"]
 
 
 ErrorKind = Literal["network", "timeout", "http", "decode"]
@@ -94,7 +90,13 @@ class InformeListItem:
         )
 
 
-def _pick(d: dict[str, Any], flat_key: str, nested: dict[str, Any], nested_key: str, default: str = "") -> str:
+def _pick(
+    d: dict[str, Any],
+    flat_key: str,
+    nested: dict[str, Any],
+    nested_key: str,
+    default: str = "",
+) -> str:
     """Pick a value from a flat key first, falling back to a nested dict's key.
 
     Reduces the InformeDetail.from_dict isinstance ladder to one helper.
@@ -148,7 +150,9 @@ class InformeDetail:
             id_informe=d.get("id_informe", ""),
             paciente_cedula=_pick(d, "paciente_cedula", paciente, "cedula"),
             paciente_nombre=_pick(d, "paciente_nombre", paciente, "nombre"),
-            paciente_fecha_nacimiento=_pick(d, "paciente_fecha_nacimiento", paciente, "fecha_nacimiento"),
+            paciente_fecha_nacimiento=_pick(
+                d, "paciente_fecha_nacimiento", paciente, "fecha_nacimiento"
+            ),
             paciente_sexo=_pick(d, "paciente_sexo", paciente, "sexo"),
             poliza_numero=_pick(d, "poliza_numero", poliza, "numero"),
             plan_nombre=_pick(d, "plan_nombre", plan, "nombre"),
@@ -217,9 +221,7 @@ class ProcesarResponse:
         # not yet populated" — treat it as a Decision with all-empty fields,
         # not None. Only None/missing means "no decision at all".
         decision = (
-            Decision.from_dict(decision_raw)
-            if isinstance(decision_raw, dict)
-            else None
+            Decision.from_dict(decision_raw) if isinstance(decision_raw, dict) else None
         )
         return cls(
             trace=[
@@ -256,7 +258,9 @@ def _request_json(method: str, url: str, *, timeout: float) -> Any:
     try:
         return resp.json()
     except (json.JSONDecodeError, ValueError) as exc:
-        raise BackendError(kind="decode", message=f"Malformed JSON: {exc}", url=url) from exc
+        raise BackendError(
+            kind="decode", message=f"Malformed JSON: {exc}", url=url
+        ) from exc
 
 
 def fetch_informes() -> list[InformeListItem]:
@@ -269,7 +273,9 @@ def fetch_informes() -> list[InformeListItem]:
             message=f"Expected list, got {type(payload).__name__}",
             url=url,
         )
-    return [InformeListItem.from_dict(item) for item in payload if isinstance(item, dict)]
+    return [
+        InformeListItem.from_dict(item) for item in payload if isinstance(item, dict)
+    ]
 
 
 @dataclass
@@ -327,7 +333,9 @@ def fetch_cobertura(cpt: str, plan_id: str) -> Optional[Cobertura]:
     try:
         data = resp.json()
     except (ValueError, AttributeError) as exc:
-        raise BackendError(kind="decode", message=f"Malformed JSON: {exc}", url=url) from exc
+        raise BackendError(
+            kind="decode", message=f"Malformed JSON: {exc}", url=url
+        ) from exc
     if not isinstance(data, dict):
         raise BackendError(
             kind="decode",
@@ -366,7 +374,9 @@ def fetch_informe_detail(informe_id: str) -> Optional[InformeDetail]:
     try:
         payload = resp.json()
     except (json.JSONDecodeError, ValueError) as exc:
-        raise BackendError(kind="decode", message=f"Malformed JSON: {exc}", url=url) from exc
+        raise BackendError(
+            kind="decode", message=f"Malformed JSON: {exc}", url=url
+        ) from exc
     if not isinstance(payload, dict):
         raise BackendError(
             kind="decode",
