@@ -1,7 +1,7 @@
 # Fly.io app config. Rename `app` if "preauth-backend" is taken; the same
 # value goes into Streamlit's BACKEND_URL secret as https://<app>.fly.dev.
 app = "preauth-backend"
-primary_region = "mia"
+primary_region = "gru"
 
 [build]
   dockerfile = "Dockerfile"

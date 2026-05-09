@@ -8,13 +8,51 @@ from notion_client import Client
 
 from app.config import settings
 
-notion = Client(auth=settings.NOTION_TOKEN)
+# Notion 2025-09-03 introdujo data sources: cada database expone uno o más
+# data_sources, y `databases.query` deja de funcionar para bases creadas tras
+# esa versión. Hay que usar el endpoint `data_sources.query` y crear páginas
+# con parent `data_source_id` en lugar de `database_id`.
+NOTION_VERSION = "2025-09-03"
+
+notion = Client(auth=settings.NOTION_TOKEN, notion_version=NOTION_VERSION)
 
 
 # ---------- Errores ----------
 
 class NotFound(Exception):
     pass
+
+
+# ---------- Resolución database_id -> data_source_id ----------
+
+# Cache simple: los IDs son estables durante la vida del proceso.
+_DATA_SOURCE_CACHE: dict[str, str] = {}
+
+
+def _resolve_data_source(database_id: str) -> str:
+    """Devuelve el data_source_id primario asociado a un database_id."""
+    cached = _DATA_SOURCE_CACHE.get(database_id)
+    if cached:
+        return cached
+    db = notion.databases.retrieve(database_id=database_id)
+    sources = db.get("data_sources") or []
+    if not sources:
+        raise NotFound(
+            f"Database {database_id} no expone data_sources; ¿la integración tiene acceso?"
+        )
+    ds_id = sources[0]["id"]
+    _DATA_SOURCE_CACHE[database_id] = ds_id
+    return ds_id
+
+
+def _query_data_source(database_id: str, body: dict) -> dict:
+    """POST /v1/data_sources/{id}/query usando el cliente del SDK."""
+    ds_id = _resolve_data_source(database_id)
+    return notion.request(
+        path=f"data_sources/{ds_id}/query",
+        method="POST",
+        body=body,
+    )
 
 
 # ---------- Extractores de propiedades ----------
@@ -53,10 +91,8 @@ def _relation_ids(prop: dict) -> list[str]:
     return [r["id"] for r in (prop.get("relation") or [])]
 
 
-def _query_one(data_source_id: str, filter_: dict) -> Optional[dict]:
-    r = notion.databases.query(
-        database_id=data_source_id, filter=filter_, page_size=1
-    )
+def _query_one(database_id: str, filter_: dict) -> Optional[dict]:
+    r = _query_data_source(database_id, {"filter": filter_, "page_size": 1})
     results = r.get("results") or []
     return results[0] if results else None
 
@@ -198,13 +234,10 @@ def list_informes_summary(page_size: int = 100) -> list[dict]:
     out: list[dict] = []
     cursor: Optional[str] = None
     while True:
-        kwargs: dict[str, Any] = {
-            "database_id": settings.NOTION_DB_INFORMES,
-            "page_size": page_size,
-        }
+        body: dict[str, Any] = {"page_size": page_size}
         if cursor:
-            kwargs["start_cursor"] = cursor
-        r = notion.databases.query(**kwargs)
+            body["start_cursor"] = cursor
+        r = _query_data_source(settings.NOTION_DB_INFORMES, body)
         for page in r.get("results", []):
             p = page["properties"]
             out.append(
@@ -318,7 +351,7 @@ def submit_decision(
         }
 
     notion.pages.create(
-        parent={"database_id": settings.NOTION_DB_DECISIONES},
+        parent={"data_source_id": _resolve_data_source(settings.NOTION_DB_DECISIONES)},
         properties=properties,
     )
 
